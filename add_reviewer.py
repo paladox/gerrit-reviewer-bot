@@ -16,6 +16,10 @@ g = None
 
 site = pywikibot.getSite('mediawiki', 'mediawiki')
 
+def call_utf8(command, *args, **kwargs):
+    command = [part.encode('utf-8') for part in command]
+    return subprocess.call(command, *args, **kwargs)
+
 class ReviewerFactory(object):
     nofilere = re.compile('')
 
@@ -30,7 +34,7 @@ class ReviewerFactory(object):
     def data(self):
         if hasattr(self, '_data'):
             return self._data
-        return pywikibot.data.api.Request(action="parse", page=self.page, generatexml=True, site=self.site).submit()
+        return pywikibot.data.api.Request(action="parse", page=self.page, prop='parsetree', site=self.site).submit()
 
     @property
     def objecttree(self):
@@ -42,7 +46,7 @@ class ReviewerFactory(object):
         except Exception, e:
             return default
 
-    def reviewer_generator(self, project, changedfiles):
+    def reviewer_generator(self, project, changedfiles, addedfiles=[]):
         tree = self.objecttree
 
         for section in tree.iter('h'):
@@ -65,6 +69,9 @@ class ReviewerFactory(object):
                             filere = re.compile(part.value.text or part.value.ext.inner.text, flags=re.DOTALL | re.IGNORECASE)
                         elif part.name == "match_all_files" or part.value.text == "match_all_files":
                             matchall = True
+                        elif part.name == "only_match_new_files" or part.value.text == "only_match_new_files":
+                            logger.info("%r:%r -> only checking new files" % (name, reviewer))
+                            changedfiles = addedfiles
                     if matchall:
                         result = all(filere.search(file) for file in changedfiles)
                     else:
@@ -121,8 +128,14 @@ def add_reviewers(changeid, reviewers):
         params.append(changeid)
         command = "gerrit set-reviewers " + " ".join(quote(p) for p in params)
         print command
-        retval = subprocess.call(["ssh", "-o", "ConnectTimeout=10", "-o", "Batchmode=yes", "-i", "id_rsa", "-p", "29418", "reviewer-bot@gerrit.wikimedia.org", command])
+        callcmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "Batchmode=yes", "-i", "id_rsa", "-p", "29418", "reviewer-bot@gerrit.wikimedia.org", command]
+        retval = call_utf8(callcmd)
         if retval != 0:
+            with open('debug.out', 'a') as fp:
+                retval = call_utf8(
+                    [callcmd[0]] + ["-v", "-v"] + callcmd[1:],
+                    stdout = fp,
+                    stderr = subprocess.STDOUT)
             raise Exception(command + ' was not executed successfully (code %i)' % retval)
 
 if __name__ == "__main__":
@@ -158,7 +171,7 @@ if __name__ == "__main__":
                 params.append(change['id'])
                 command = "gerrit set-reviewers " + " ".join(quote(p) for p in params)
                 print command
-                print subprocess.call(["ssh", "-i", "id_rsa", "-p", "29418", "reviewer-bot@gerrit.wikimedia.org", command])
+                print call_utf8(["ssh", "-i", "id_rsa", "-p", "29418", "reviewer-bot@gerrit.wikimedia.org", command])
         except Exception, e:
             print "-"*80
             print "Exception %r caused by line:" % e
